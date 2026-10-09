@@ -1,25 +1,9 @@
 #!/usr/bin/env python3
-"""
-Combine compress JSON + CoTA parquet → sharegpt JSON, wav uploaded to S3 directly.
+"""Build sharegpt SFT data from compressed-label JSON + CoTA parquet.
 
-Pipeline:
-  1. Read compress result JSON (question, compressed_answer, scores)
-  2. Read audio waveform from CoTA parquet (mounted S3)
-  3. Compute difficulty scores (D_P, D_C, D_R), insert <R1>-<R5> rating tokens
-  4. Upload wav to S3 via boto3 (no local disk writes for audio)
-  5. Write sharegpt JSON (text only, tiny)
-
-The JSON audio paths are relative filenames (e.g. "train_000001.wav").
-At training time, mount s3://liyixuan/data/CoTA/audio_files/ as media_dir.
-
-Usage:
-  python prepare_full_data.py \\
-    --compress_root /path/to/compress/result \\
-    --cota_root /path/to/mounted/CoTA \\
-    --output_dir /path/to/converted_data \\
-    --s3_bucket liyixuan \\
-    --s3_prefix data/CoTA/audio_files \\
-    --s3_endpoint ${S3_ENDPOINT}
+Reads questions/compressed answers/scores, inserts <R1>-<R5> rating tokens,
+uploads wavs to S3, and writes the sharegpt JSON (audio referenced by relative
+filename; mount that S3 prefix as media_dir at training time).
 """
 
 import argparse
@@ -31,7 +15,7 @@ import io
 import signal
 import sys
 import time
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
 
 import numpy as np
 import pandas as pd
@@ -185,7 +169,7 @@ def process_json_file(args):
     # Each worker creates its own S3 client (can't pickle boto3 client)
     s3_client = _make_s3_client(s3_endpoint)
 
-    # SFT/RL 切分白名单：样本 ID = <subset>/<basename>#<idx>
+    # Sample ID for the SFT/RL whitelist: <subset>/<basename>#<idx>.
     subset0 = json_rel.split(os.sep)[0]
     base0 = os.path.basename(json_rel)
 
@@ -201,9 +185,8 @@ def process_json_file(args):
     with open(json_full, "r", encoding="utf-8") as f:
         items = json.load(f)
 
-    # Load parquet with retry (goofys mount can have transient errors)。
-    # 部分 CoTA parquet 的 audio 列 pyarrow 读不了（List index overflow），duckdb 能读；
-    # 优先 duckdb，失败回退 pandas。
+    # Load parquet with retry (mounts can have transient errors).
+    # Prefer duckdb for parquet reading (pyarrow fails on some audio columns).
     def _read_parquet():
         try:
             import duckdb
@@ -213,8 +196,7 @@ def process_json_file(args):
         except Exception:
             return pd.read_parquet(parquet_full)
 
-    # skip_upload（raw 版）不需要读 parquet / 音频：文件名由 subset/file/idx 决定，与 compress 版一致。
-    # 避免并发 worker 把大文件 audio 列整列读进内存导致 OOM。
+    # skip_upload avoids loading parquet audio columns (prevents worker OOM).
     df = None
     audio_waveforms = None
     if not skip_upload:
@@ -229,7 +211,7 @@ def process_json_file(args):
             print(f"[Warn] {json_rel}: parquet({len(df)}) != json({process_len}), using min")
 
         # Eagerly load audio data into memory to avoid lazy reads from flaky mount。
-        # audio 列可能是 list/ndarray(波形) 或 bytes(编码音频，如 FLAC/WAV)，统一转 float32 波形。
+        # Audio may be waveform list/ndarray or encoded bytes (FLAC/WAV).
         def _extract_audio_column():
             audio_list = []
             col = df["audio"]
@@ -270,7 +252,7 @@ def process_json_file(args):
         if not use_raw and skip_invalid and (compressed is None or err is not None):
             continue
 
-        # SFT/RL 切分白名单：不在 include_ids 里的样本跳过（保持 parquet 按 idx 对齐）
+        # Skip samples not in the include whitelist (keeps parquet idx alignment).
         if include_ids is not None:
             sid = f"{subset0}/{base0}#{idx}"
             if sid not in include_ids:
@@ -281,7 +263,7 @@ def process_json_file(args):
         user_text = question.replace("<audio>", "").strip()
 
         if use_raw:
-            # raw 模式：直接用未压缩的原始答案，不插 rating token
+            # raw mode: use the original uncompressed answer, no rating tokens
             annotated_answer = item.get("answer", "")
             if not (isinstance(annotated_answer, str) and annotated_answer.strip()):
                 print(f"[Warn] Item {idx} in {json_rel}: raw answer empty, skip")
@@ -296,7 +278,7 @@ def process_json_file(args):
             # Insert rating tokens
             annotated_answer = insert_rating_tokens(compressed, D_P, D_C, D_R)
 
-        # Read audio from eagerly-loaded in-memory list（skip_upload 时不需要）
+        # Read audio from the eagerly-loaded in-memory list.
         if not skip_upload:
             waveform = audio_waveforms[idx]
             if waveform is None:
@@ -306,8 +288,8 @@ def process_json_file(args):
         # Generate filename unique within this split
         audio_filename = f"{subset}_{os.path.basename(json_rel).replace('.json', '')}_{idx:06d}.wav"
 
-        # Upload wav to S3 (with retry)。skip_upload 时跳过上传：compress 版已上传同名 wav，
-        # raw 版复用（压缩/raw 的音频文件名都由 subset/file/idx 决定，完全一致）。
+        # Upload wav to S3 with retry; skip_upload reuses uploaded files.
+
         if not skip_upload:
             try:
                 wav_bytes = waveform_to_wav_bytes(waveform, samplerate)
@@ -355,8 +337,7 @@ def main():
     parser.add_argument("--cota_root", type=str, required=True,
                         help="Path to mounted CoTA directory")
     parser.add_argument("--include_ids", type=str, default=None,
-                        help="SFT/RL 切分白名单 jsonl（每行 {\"id\": \"<subset>/<file>#<idx>\"}）。"
-                             "提供后只处理白名单内的样本（保持 parquet 按 idx 对齐）。")
+                        help="Whitelist jsonl of {\"id\": \"<subset>/<file>#<idx>\"} rows.")
     parser.add_argument("--output_dir", type=str, required=True,
                         help="Directory to write sharegpt JSON + dataset_info.json")
     parser.add_argument("--s3_bucket", type=str, default=os.environ.get("S3_BUCKET", ""),
@@ -367,14 +348,13 @@ def main():
                         default=os.environ.get("S3_ENDPOINT", ""),
                         help="S3 endpoint URL")
     parser.add_argument("--use_raw", action="store_true", default=False,
-                        help="raw 模式：用未压缩的原始 answer 字段（不插 rating token）。"
-                             "输出 full_raw.json，dataset 名 cota_sft_raw")
+                        help="Use raw uncompressed answers; outputs full_raw.json.")
     parser.add_argument("--output_name", type=str, default=None,
-                        help="输出 sharegpt 文件名（默认 full.json，--use_raw 时 full_raw.json）")
+                        help="Output sharegpt filename (default full.json / full_raw.json)")
     parser.add_argument("--dataset_name", type=str, default=None,
-                        help="dataset_info 里的 dataset 名（默认 cota_sft，--use_raw 时 cota_sft_raw）")
+                        help="Dataset name in dataset_info (default cota_sft / cota_sft_raw)")
     parser.add_argument("--skip_upload", action="store_true", default=False,
-                        help="跳过 S3 上传：compress 版已上传同名 wav，raw 版复用（音频文件名一致）")
+                        help="Skip S3 upload (reuses previously uploaded wav files)")
     parser.add_argument("--skip_invalid", action="store_true", default=True)
     parser.add_argument("--val_ratio", type=float, default=0.05,
                         help="Proportion for validation split")
@@ -409,7 +389,7 @@ def main():
     json_files = find_json_files(args.compress_root)
     print(f"[Info] Found {len(json_files)} JSON files in {args.compress_root}")
 
-    # 加载 SFT/RL 切分白名单
+    # Load the SFT/RL whitelist
     include_ids = None
     if args.include_ids:
         include_ids = set()
@@ -418,7 +398,7 @@ def main():
                 line = line.strip()
                 if line:
                     include_ids.add(json.loads(line)["id"])
-        print(f"[Info] 加载 include_ids {len(include_ids):,} 条样本")
+        print(f"[Info] Loaded {len(include_ids):,} include_ids")
 
     # Prepare args for parallel processing
     process_args = []
@@ -459,7 +439,7 @@ def main():
     rng = random.Random(args.seed)
     rng.shuffle(all_samples)
 
-    # 输出文件名与 dataset 名（--use_raw 时用 raw 专属命名，避免覆盖 compress 版）
+    # Output names (raw mode uses its own names to avoid overwriting)
     output_name = args.output_name or ("full_raw.json" if args.use_raw else "full.json")
     dataset_name = args.dataset_name or ("cota_sft_raw" if args.use_raw else "cota_sft")
 

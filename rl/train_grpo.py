@@ -30,7 +30,7 @@ try:
         ShardingStrategy,
     )
     from torch.distributed.fsdp.wrap import transformer_auto_wrap_policy
-except ImportError:  # pragma: no cover - exercised only by obsolete torch images
+except ImportError:  # very old torch images
     FSDP = None
     FSDPMixedPrecision = None
     ShardingStrategy = None
@@ -117,7 +117,6 @@ def _make_run_manifest(
         adapter_config = json.loads(adapter_config_path.read_text(encoding="utf-8"))
 
     return {
-        "schema_version": "rl_run_manifest.v1",
         "status": "running",
         "started_at_utc": datetime.now(timezone.utc).isoformat(),
         "job_tag": os.environ.get("RL_JOB_TAG"),
@@ -295,8 +294,7 @@ def build_or_load_curriculum(rl_cfg):
     curriculum_data = paths.get(
         "curriculum_data", os.path.join(BASE_DIR, "data", "curriculum"),
     )
-    # Accept either a DIRECTORY (legacy / smoke) or a direct .jsonl FILE path
-    # (paper-experiment configs, e.g. .../iso_k4/curriculum_data.jsonl).
+    # Accept a curriculum directory or a direct .jsonl file path.
     if str(curriculum_data).endswith(".jsonl"):
         cf = curriculum_data
         curriculum_dir = os.path.dirname(cf)
@@ -307,16 +305,7 @@ def build_or_load_curriculum(rl_cfg):
         explicit_file = False
     if not os.path.exists(cf):
         if explicit_file:
-            # Paper experiments point at iso_kX curricula that are built by
-            # scripts/build_experiment_curricula.sh WITH --include_ids (RL/SFT
-            # isolation). Auto-building here would produce the WRONG (full,
-            # overlapping) data and silently break the isolation setup — so fail
-            # loudly instead.
-            raise FileNotFoundError(
-                f"[Data] curriculum file not found: {cf}\n"
-                f"  → 先跑 scripts/build_experiment_curricula.sh（隔离版，带 --include_ids）"
-                f"  ，再把新 compress 数据 + rl_ids 交给它。"
-            )
+            raise FileNotFoundError(f"Curriculum file not found: {cf}")
         from data.build_curriculum import build_curriculum
         compress_root = paths.get(
             "compress_root",
@@ -359,7 +348,7 @@ def task_family(item: dict) -> str:
 
 
 def bplus_stratum(item: dict) -> str:
-    """Return the stored B+ stratum, with a deterministic legacy fallback."""
+    """Return the stored B+ stratum, with a deterministic fallback."""
 
     stored = item.get("bplus_stratum")
     if stored not in (None, ""):
@@ -430,24 +419,17 @@ def main():
     curriculum_file = build_or_load_curriculum(rl_cfg)
     print(f"[Data] {curriculum_file}")
 
-    # Model
-    # `model_name_or_path` is ALWAYS the Qwen2.5-Omni-7B base (tokenizer/processor source).
-    # `sft_checkpoint` is the SFT output for RL init — three formats supported:
-    #   A) SFT as a LoRA adapter (adapter_config.json present)  → legacy path, RL continues
-    #      the SAME LoRA. PeftModel.from_pretrained(model, sft_ckpt, is_trainable=True).
-    #   B) SFT as an HF FULL model (safetensors/index present, no adapter_config).
-    #   C) SFT as raw DeepSpeed ZeRO-3 FULL shards (latest + global_step*).
-    # For B/C, RL starts a fresh LoRA when lora_rank>0, or trains all parameters
-    # when lora_rank is null/0.
+    # `model_name_or_path` is the base model (tokenizer/processor source);
+    # `sft_checkpoint` may be a LoRA adapter, an HF full model, or ZeRO-3
+    # shards. Full-model SFT starts a fresh LoRA when lora_rank > 0.
     model_path = llamacfg.get(
         "model_name_or_path",
         os.environ.get("BASE_MODEL", "Qwen/Qwen2.5-Omni-7B"))
     requested_sft_ckpt = os.environ.get("SFT_CKPT") or llamacfg.get("sft_checkpoint")
     if not requested_sft_ckpt:
         raise ValueError(
-            "An explicit SFT checkpoint is required: set top-level "
-            "sft_checkpoint in the YAML or export SFT_CKPT. Refusing to "
-            "silently fall back to the obsolete checkpoint-7024 baseline."
+            "An explicit SFT checkpoint is required: set sft_checkpoint in "
+            "the YAML or export SFT_CKPT."
         )
     checkpoint = resolve_sft_checkpoint(requested_sft_ckpt)
     sft_ckpt = str(checkpoint.path)
@@ -527,13 +509,10 @@ def main():
         )
     model.train()
 
-    # Gradient checkpointing: ON by default (reliable). NOTE: KV-cached
-    # generation (config.use_cache=True) HANGS on this model (Qwen2.5-Omni +
-    # PEFT), so generation must run cacheless — which gradient checkpointing
-    # enforces. Checkpointing needs the input-require-grads hook because a
-    # fully-frozen base + LoRA makes checkpointed layers see no grad-requiring
-    # inputs (embedding output requires_grad=False), otherwise backward crashes.
-    # Set config gradient_checkpointing=false only if OOM is acceptable.
+    # Gradient checkpointing is on by default; generation must stay cacheless
+    # (KV cache hangs on this model + PEFT). The input-require-grads hook is
+    # needed because the frozen base leaves checkpointed layers without
+    # grad-requiring inputs.
     if llamacfg.get("gradient_checkpointing", True):
         model.config.use_cache = False
         checkpoint_kwargs = {}
@@ -715,7 +694,7 @@ def main():
     )
 
     kl_cfg = rl_cfg.get("kl", {})
-    comp_cfg = rl_cfg.get("compression", {})  # Task B 重设计：自评难度→输出压缩
+    comp_cfg = rl_cfg.get("compression", {})
     aux_cfg = rl_cfg.get("aux_loss", {})
 
     gen_cfg = llamacfg.get("generation", {}) or {}
@@ -1006,7 +985,7 @@ def main():
             )
             if not idx:
                 # Active buckets have no items in this rank's shard — fall back
-                # to anything the rank owns (legacy smoke only).
+                # to anything the rank owns (smoke runs only).
                 all_rank = [
                     index
                     for indices in rank_bucket_indices.values()
@@ -1039,7 +1018,6 @@ def main():
     def sampling_state_dict() -> dict:
         """Per-rank stochastic/data state required for an exact FSDP resume."""
         return {
-            "schema_version": "rl_sampling_state.v1",
             "sample_step": int(sample_step),
             "cell_sampler": (
                 cell_sampler.state_dict() if cell_sampler is not None else None
@@ -1056,8 +1034,8 @@ def main():
 
     def load_sampling_state_dict(state: dict) -> None:
         nonlocal sample_step
-        if state.get("schema_version") != "rl_sampling_state.v1":
-            raise ValueError("unsupported or missing RL sampling-state schema")
+        if "sample_step" not in state:
+            raise ValueError("unsupported RL sampling state")
         sample_step = int(state["sample_step"])
         saved_cell_sampler = state.get("cell_sampler")
         if (saved_cell_sampler is None) != (cell_sampler is None):

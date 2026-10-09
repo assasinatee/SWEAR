@@ -91,6 +91,3 @@ def extract_answer_from_response(response: str) -> Optional[str]:
     # No <RESPONSE> section — LAST explicit "answer is X" (final answer)
     return _last_explicit(response)
 
-
-def normalize_answer(answer: str) -> str:
-    return re.sub(r'\s+', ' ', answer.strip().lower())

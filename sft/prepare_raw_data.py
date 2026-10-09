@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""
-Generate sharegpt JSON using the ORIGINAL uncompressed answer field.
-"""
-import json, glob, os, re
+"""Generate sharegpt JSON using the original uncompressed answer field."""
+import glob
+import json
+import os
+import re
 from multiprocessing import Pool
 
 COMPRESS_DIR = os.environ.get("COMPRESS_ROOT", "compress/result")

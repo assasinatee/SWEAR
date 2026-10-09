@@ -1,22 +1,10 @@
 #!/usr/bin/env python3
-"""Unified MMAU-test-mini eval (base / raw / compress LoRA).
+"""MMAU-test-mini evaluation for base / LoRA checkpoints.
 
-默认 prompt 为 "Which of the following is correct?" —— 与训练模式贴合，
-逻辑来自已验证的 eval_mmau_rl1000.py (RL1000 = 69.5%)：
-  - 选项标注 (a)(b)(c)...
-  - 答案提取: 保守的最终块/cue/内容解析（baseline-choice-v4）
-  - 计分: 严格字母 + 完全重复选项等价类（choice-equivalence-v1）
-  - max_new_tokens=1536 (CoT 模型 ~200-450 tok)
-
-可选 --prompt direct/cot 作对照。所有样本(gt/pred/method/n_tok/truncated/resp)
-以及 category/difficulty/task 分桶全部落盘，供后期离线重解析。
-
-Usage (cluster):
-    python eval_mmau_unified.py                      # compress SFT (train_v3_rank64 ckpt7024)
-    python eval_mmau_unified.py --no-lora            # base
-    python eval_mmau_unified.py --ckpt .../train_raw_v2_rank64   # raw
-    python eval_mmau_unified.py --no-lora --prompt direct        # 对照
-    python eval_mmau_unified.py --n 10               # 快速验证
+Uses the "which" prompt (matching training), letter-labeled options, and
+conservative final-block answer parsing. Scoring is exact label match with
+exact duplicate choices treated as equivalent. Per-sample records and
+category/difficulty/task breakdowns are saved for offline re-analysis.
 """
 
 import argparse
@@ -38,8 +26,8 @@ from transformers import AutoTokenizer, Qwen2_5OmniProcessor, GenerationConfig
 from transformers import Qwen2_5OmniThinkerForConditionalGeneration
 from peft import PeftModel
 
-from baseline_answer_parser import PARSER_VERSION, resolve_choice
-from choice_answer_scoring import SCORER_VERSION, score_choice
+from baseline_answer_parser import resolve_choice
+from choice_answer_scoring import score_choice
 
 MODEL = os.environ.get("BASE_MODEL", "Qwen/Qwen2.5-Omni-7B")
 SFT_CKPT = os.environ.get("SFT_CKPT", "")
@@ -71,8 +59,7 @@ def extract_gt(answer_field):
 
 
 def to_list(x):
-    """MMAU choices 可能是 list / numpy array / [array] / str, 统一展平成 str 列表。
-    与 eval_mmau_rl1000.py 的 to_flat_list 行为一致(避免整段选项被当单个字符串)。"""
+    """Flatten MMAU choices (list / array / nested list / str) into strings."""
     if isinstance(x, np.ndarray):
         return [str(v) for v in x.tolist()]
     if isinstance(x, (list, tuple)):
@@ -94,8 +81,7 @@ def to_list(x):
 
 
 def build_which_prompt(question, choices):
-    """Which of the following is correct? {question} (a) ... (b) ...  (训练模式贴合)
-    与 eval_mmau_rl1000.py 的 prompt 完全一致: 选项已是 '(A) xxx' 时保留字母, 否则按序补标签。"""
+    """Training-format prompt: keep existing option letters, else label (a)(b)(c)..."""
     parts = []
     for i, c in enumerate(choices):
         c_str = str(c).strip()
@@ -163,16 +149,16 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=MODEL, help="HF model directory; use --no-lora for a merged/full model")
     ap.add_argument("--processor", default=None, help="Optional processor directory when a full checkpoint exports weights/tokenizer but no preprocessor_config.json")
-    ap.add_argument("--ckpt", default=SFT_CKPT, help="LoRA 权重目录(--no-lora 用 base)")
+    ap.add_argument("--ckpt", default=SFT_CKPT, help="LoRA checkpoint directory (base model if --no-lora)")
     ap.add_argument("--no-lora", action="store_true")
     ap.add_argument("--merge", choices=["peft", "manual"], default="peft",
-                    help="manual 用于 RL 权重(scale=alpha/r, 默认 128/64=2.0)")
+                    help="manual merge scales LoRA by alpha/r (default 128/64=2.0)")
     ap.add_argument("--alpha", type=int, default=128)
     ap.add_argument("--r", type=int, default=64)
     ap.add_argument("--prompt", choices=list(PROMPTS), default="which",
-                    help="which=训练模式贴合(默认); direct/cot 仅作对照")
+                    help="which matches training (default); direct/cot are baselines")
     ap.add_argument("--max-new-tokens", type=int, default=DEFAULT_MAX_TOKENS)
-    ap.add_argument("--n", type=int, default=0, help=">0 只评测前 n 条")
+    ap.add_argument("--n", type=int, default=0, help="evaluate only the first n samples")
     ap.add_argument("--parquet", default=MMAU,
                      help="MMAU test_mini.parquet path")
     ap.add_argument("--out", default=DEFAULT_OUT)
@@ -240,7 +226,7 @@ def main():
     print(f"[mmau] <RESPONSE> hit={resp_hit}/{len(df)} = {resp_hit/len(df)*100:.1f}%")
     print(f"[mmau] truncated={trunc_rate:.1f}%  avg_tok={statistics.mean(n_toks):.1f}")
 
-    # category / difficulty / task 分桶(来自 other_attributes)
+    # category / difficulty / task breakdowns
     buckets = {}
     for i, row in enumerate(df.itertuples()):
         try:
@@ -269,7 +255,6 @@ def main():
         "strict_correct": strict_correct, "strict_accuracy": round(strict_acc, 2),
         "duplicate_equivalent_corrected": duplicate_corrected,
         "metric": "option accuracy with exact duplicate choices treated as equivalent",
-        "parser_version": PARSER_VERSION, "scorer_version": SCORER_VERSION,
         "method_dist": method_dist, "resp_block_hit": resp_hit,
         "truncated_rate": round(trunc_rate, 2), "avg_tokens": round(statistics.mean(n_toks), 1),
         "buckets": buckets,

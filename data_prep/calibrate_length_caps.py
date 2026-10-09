@@ -6,15 +6,12 @@ level. The cap for level r should be the compress phase's actual per-difficulty
 target length: `compression_meta.target_total` for items whose teacher
 difficulty is r.
 
-Difficulty axis (2026-08-13 FIX): use the RAW teacher `Reasoning_Demand`
-(1-5) — NOT the derived D_R. D_R = 0.5·rd/5 + 0.5·is/5 floors at 0.2, so a
-S_mean·4+1 level never assigns R1, even though RD=1 is 42.8% of the data (195k
-items, the largest single class; mostly S2TT). `compression_meta.target_total`
-is monotonic in RD (median 99 → 313), so it is the right difficulty→length map.
+Difficulty uses the raw teacher `Reasoning_Demand` (1-5), to which
+`compression_meta.target_total` is monotonic.
 
 Usage:
-  python scripts/analysis/calibrate_length_caps.py <compress_root> [-o caps.json] [--pct 85]
-  → prints [R1..R5] caps; put them in config `compression.caps`.
+  python calibrate_length_caps.py <compress_root> [-o caps.json] [--pct 85]
+  Prints [R1..R5] caps; put them in config `compression.caps`.
 """
 import argparse
 import json
@@ -67,7 +64,7 @@ def main():
         print(f"  R{lv}: n={len(vals):>7}  p{args.pct:.0f}={cap:5d}  (median={statistics.median(vals):5.0f})")
 
     print(f"\ncaps = {caps}")
-    print("→ 填进 config 的 `compression.caps`（保留合理下限，例如 < 100 的设 100）")
+    print("Put these into compression.caps in the config (floor small values to ~100).")
     if args.out:
         json.dump({"caps": caps, "pct": args.pct, "n": dict(cnt)}, open(args.out, "w"), indent=2)
         print(f"wrote {args.out}")

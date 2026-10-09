@@ -53,7 +53,7 @@ python eval/eval_mmau_unified.py \
     --out results/mmau.json
 ```
 
-Option accuracy with exact duplicate choices treated as equivalent (parser `baseline-choice-v4`, scorer `choice-equivalence-v1`).
+Option accuracy with exact duplicate choices treated as equivalent.
 
 ## License
 

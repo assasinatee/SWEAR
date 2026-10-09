@@ -1,6 +1,6 @@
 """Reward functions for RL training."""
-from .base import BaseReward, RewardPipeline, extract_answer_from_response
-from .format_reward import FormatReward, StrictFormatReward
+from .base import BaseReward
+from .format_reward import FormatReward
 from .quality_reward import (
     QualityReward,
     QualityRewardPipeline,

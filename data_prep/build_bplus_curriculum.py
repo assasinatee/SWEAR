@@ -1,23 +1,10 @@
 #!/usr/bin/env python3
-"""Build versioned B+ curriculum JSONL files.
+"""Build B+ curriculum JSONL files from a source curriculum.
 
-The builder intentionally has no overwrite mode.  For each requested K it
-publishes ``curriculum_data.jsonl`` and ``manifest.json`` together by renaming
-a completed temporary directory into place.  The source curriculum is read
-twice: once through the audited difficulty/bucketing implementation and once
-to copy the original records while adding B+ fields.
-
-Example (the default K list is 1, 3, 4):
-
-  python RL/scripts/build_bplus_curriculum.py \
-    --input RL/data/curriculum/iso_k4/curriculum_data.jsonl \
-    --output-root RL/data/curriculum/bplus_closed_drms_v1
-
-The default mode remains closed-only and its expected counts deliberately bind
-that version to the reviewed 172,498-row source and its 113,410 closed rows.
-``--include-open`` is an explicit opt-in for a separately versioned full-data
-curriculum; callers must also provide its post-selection count and a non-default
-curriculum version.
+For each K, publishes curriculum_data.jsonl + manifest.json atomically (a
+completed temp directory is renamed into place; existing output is never
+overwritten). Default mode keeps closed-answer items only; --include-open
+opts into full data with explicit expected counts.
 """
 
 from __future__ import annotations
@@ -53,8 +40,8 @@ from audit_closed_difficulty import (  # noqa: E402
 )
 
 
-MANIFEST_SCHEMA_VERSION = "bplus_curriculum_manifest.v1"
-CURRICULUM_VERSION = "bplus_closed_drms_v1"
+MANIFEST_SCHEMA_VERSION = "bplus_curriculum_manifest"
+CURRICULUM_VERSION = "bplus_closed_drms"
 DEFAULT_K = (1, 3, 4)
 DEFAULT_EXPECTED_INPUT_COUNT = 172_498
 DEFAULT_EXPECTED_CLOSED_COUNT = 113_410
@@ -131,9 +118,7 @@ def _validate_source(
             f"({validation['valid_difficulty_rows']} != {validation['selected_rows']})"
         )
 
-    # The old stored difficulty_norm is deliberately overwritten, so its
-    # absence or legacy value is not an input failure.  All source/teacher
-    # fields needed by the new curriculum remain strict.
+    # difficulty_norm is recomputed, so a stale stored value is not an error.
     unexpected_missing = {
         key: count
         for key, count in validation["missing_fields"].items()
@@ -533,10 +518,10 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-root",
         type=Path,
-        default=Path("RL/data/curriculum/bplus_closed_drms_v1"),
+        default=Path("data/curriculum_bplus"),
         help=(
             "parent directory; each K is published under k<K>/ "
-            "(default: RL/data/curriculum/bplus_closed_drms_v1)"
+            "(default: data/curriculum_bplus)"
         ),
     )
     parser.add_argument(
@@ -576,7 +561,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--curriculum-version",
         default=CURRICULUM_VERSION,
-        help=f"version stored in output rows/manifests (default: {CURRICULUM_VERSION})",
+        help="curriculum tag stored in output rows/manifests",
     )
     return parser
 

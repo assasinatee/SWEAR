@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Build the immutable no-translation SFT / choice-only RL ID split.
+"""Build the SFT / choice-only RL ID split without translation tasks.
 
-The existing 70/30 assignment is preserved.  SFT drops every S2TT sample;
-RL drops every S2TT sample and retains only records classified as ``choice``
-by the already-isolated RL curriculum.  No source data is modified.
+SFT and RL ID lists drop all S2TT samples; RL keeps only choice records.
+No source data is modified.
 """
 
 from __future__ import annotations
@@ -19,7 +18,7 @@ from pathlib import Path
 from typing import Iterable
 
 
-VERSION = "no_translation_sft_choice_rl_v3"
+VERSION = "sft_choice_rl"
 EXPECTED_SFT = 257_564
 EXPECTED_RL = 51_308
 
@@ -145,12 +144,12 @@ def main() -> int:
     parser.add_argument(
         "--output-dir",
         type=Path,
-        default=Path("split_output/no_translation_sft_choice_rl_v3"),
+        default=Path("split_output/sft_choice_rl"),
     )
     parser.add_argument(
         "--quality-exclusions",
         type=Path,
-        default=Path("split_output/quality_exclusions_no_translation_v2.jsonl"),
+        default=Path("split_output/quality_exclusions.jsonl"),
     )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -217,7 +216,7 @@ def main() -> int:
     atomic_write_jsonl(output_paths[0], sft_ids)
     atomic_write_jsonl(output_paths[1], rl_ids)
     manifest = {
-        "schema_version": "filtered_split_manifest.v1",
+        "schema_version": "filtered_split_manifest",
         "version": VERSION,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "rules": {

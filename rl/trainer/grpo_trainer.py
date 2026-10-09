@@ -17,7 +17,7 @@ import math
 from bisect import bisect_right
 from contextlib import nullcontext
 from datetime import datetime, timezone
-from typing import Dict, List, Optional, Tuple, Callable, Any
+from typing import Dict, List, Optional, Tuple, Callable
 
 import torch
 import torch.nn.functional as F
@@ -32,7 +32,7 @@ try:
         FullStateDictConfig,
         StateDictType,
     )
-except ImportError:  # pragma: no cover - obsolete torch images only
+except ImportError:  # very old torch images
     FSDP = None
     FullStateDictConfig = None
     StateDictType = None
@@ -118,7 +118,7 @@ class GRPOTrainer:
 
         # Pending per-group curriculum rewards, gathered + applied across ranks
         # in _sync_curriculum after each step. Each entry is
-        # (bucket_id, avg_quality, legacy_baseline, reward_family).
+        # (bucket_id, avg_quality, baseline, reward_family).
         self._pending_curriculum: List[tuple] = []
 
         # Competence baseline per task type (see CurriculumScheduler.add_rewards):
@@ -276,13 +276,8 @@ class GRPOTrainer:
         if real_prompt_count < 1:
             raise ValueError("generate_responses requires at least one prompt")
 
-        # The strict global batch is 28 prompts over 8 ranks, hence four ranks
-        # own 4 real prompts and four own 3.  FSDP.summon_full_params performs
-        # collectives when ranks leave the generation context.  If 3-prompt
-        # ranks arrive there while 4-prompt ranks are still doing a long,
-        # cacheless rollout, the NCCL watchdog can expire.  Give every rank the
-        # same four generation calls; dummy outputs are discarded before any
-        # reward, curriculum, metric, or backward computation.
+        # Equalize generation calls per rank so slower ranks don't trip the
+        # NCCL watchdog at summon_full_params; dummy outputs are discarded.
         generation_slots = (
             self.micro_slots_per_rank if self.streaming_backward
             else real_prompt_count
@@ -320,18 +315,10 @@ class GRPOTrainer:
             if is_fsdp else nullcontext()
         )
 
-        # NOTE (2026-08-15): DO NOT toggle config.use_cache=True here for KV-cache
-        # generation. Gradient checkpointing is on (memory-safe training forward,
-        # batch4×G6 OOMs without it), and transformers FORCES use_cache=False
-        # whenever gradient checkpointing is enabled ("use_cache=True is
-        # incompatible with gradient checkpointing"). Toggling it back on is
-        # silently defeated — generation runs cacheless anyway — and the
-        # Qwen2.5-Omni dynamic-cache path is a native-crash/hang risk on
-        # multi-node DDP (main-0815065117 crashed in the first step's generation
-        # with no Python traceback, NCCL cascade). Leave generation cacheless.
-        # Per-prompt audio features, reused by the log-prob forwards (the
-        # response tokens must be scored under the SAME audio context that
-        # generated them).
+        # Generation stays cacheless: gradient checkpointing forces
+        # use_cache=False anyway, and the dynamic-cache path is unstable here.
+        # Audio features are reused by the log-prob forwards so responses are
+        # scored under the same audio context that generated them.
         audio_features: List = []
         audio_masks: List = []
         with generation_context:
@@ -923,16 +910,8 @@ class GRPOTrainer:
 
     def _compute_length_penalty(
         self, responses: List[str], r_norm: torch.Tensor
-    ) -> torch.Tensor:
-        """Penalize length mismatch with predicted difficulty.
-
-        penalty = -coeff * Σ max(0, -sign(r_norm-0.5) * delta)²
-
-        Only penalizes when direction is wrong:
-          R5(难) 但写得短 → 惩罚
-          R1(易) 但写得长 �� 惩罚
-          R5 写长 / R1 写短 → 不惩罚
-        """
+    ):
+        """Penalize length direction that contradicts predicted difficulty."""
         device = self.accelerator.device
         n = len(responses)
         penalties = torch.zeros(n, device=device)
@@ -1272,9 +1251,7 @@ class GRPOTrainer:
     def _compression_bin(self, r_norm: float, family: str = "") -> Tuple[int, float]:
         """Map normalized difficulty to a bin and token cap.
 
-        New configs provide task-family-specific continuous-RMS quantile edges.
-        The legacy five evenly spaced levels remain a compatibility fallback for
-        old checkpoints/configs only.
+        Uses task-family quantile edges when provided, else evenly spaced levels.
         """
         family = str(family).lower()
         if family in self.comp_caps_by_family:
@@ -1342,15 +1319,11 @@ class GRPOTrainer:
         its matching continuous teacher D_P/D_C/D_R score. The scalar norm used
         elsewhere is then derived from those three emitted ratings.
 
-        NOTE on detection (2026-08-13 FIXED): Qwen2.5-Omni BPE merges the rating's
-        `<` into the previous section tag — `<PLANNING><R3>` → '<','PL','ANN','ING',
-        '><','R','3','>' — so token 23370 (`<R`) never appears and the OLD
-        `ids == R_TOKEN_ID` detection found nothing (loss was dead even when
-        enabled). The rating DIGIT (16-20) is always a standalone token; the fix
-        locates digit tokens and confirms via a decoded window that they form
-        `<R[1-5]>`, then reads the LM-head logits at the preceding 'R' token.
-        `aux/r_token_samples` still reports how many responses actually carried a
-        rating, so a constant ~KL(soft_label || uniform) is never mistaken for a
+        Detection: BPE merges the rating's `<` into the preceding section tag,
+        so ratings are located via their standalone digit token (16-20) and
+        confirmed by decoding a small window around it. `aux/r_token_samples`
+        reports how many responses actually carried a rating, so a constant
+        ~KL(soft_label || uniform) is never mistaken for a
         learning mechanism.
 
         Returns:
@@ -1413,13 +1386,8 @@ class GRPOTrainer:
             if scan_start >= scan_end:
                 continue
 
-            # Find <R1>..<R5> rating positions.
-            # IMPORTANT: Qwen2.5-Omni BPE merges the rating's `<` into the previous
-            # section tag — <PLANNING><R3> tokenizes to '<','PL','ANN','ING','><',
-            # 'R','3','>' — so token 23370 (<R) NEVER appears and the old
-            # `ids == R_TOKEN_ID` detection found nothing (aux loss was dead).
-            # The rating digit (16-20) IS a standalone token; locate digit tokens
-            # and associate each one with its immediately preceding section tag.
+            # Locate <R1>..<R5> by the digit token: BPE merges the rating's
+            # '<' into the preceding tag, so match digits 16-20 instead.
             is_digit = torch.isin(ids[scan_start:scan_end], digit_tensor)
             digit_positions = is_digit.nonzero(as_tuple=False) + scan_start
             positions_by_dim: Dict[int, List[int]] = {
@@ -1511,7 +1479,7 @@ class GRPOTrainer:
                 strength is self.beta only — beta_dynamic must NOT contain an
                 extra coefficient, otherwise the KL term is double-scaled into
                 insignificance.
-            lengths: legacy [G] length tensor used to construct a prefix mask
+            lengths: [G] length tensor used to construct a prefix mask
                 when completion_mask is not provided.
             completion_mask: [G, resp_len], 1 through the first EOS inclusive
                 and 0 for all post-EOS/batch padding. Ratio and KL are averaged
@@ -2086,9 +2054,7 @@ class GRPOTrainer:
         for cat, vals in cat_scores.items():
             metrics[f"reward/{cat}"] = sum(vals) / len(vals)
 
-        # Per-dimension diagnostic: group samples by the DOMINANT difficulty axis
-        # (argmax D_P/D_C/D_R) and report avg quality + group-dead rate per axis.
-        # Shows which cognitive dimension the policy fails on (改进2 Phase 1).
+        # Per-dimension diagnostic: group by dominant difficulty axis.
         _dp = batch.get("D_P") or [0.5] * n_prompts
         _dc = batch.get("D_C") or [0.5] * n_prompts
         _dr = batch.get("D_R") or [0.5] * n_prompts
@@ -2303,7 +2269,6 @@ class GRPOTrainer:
             if step % log_steps == 0 and is_main:
                 prog = self.scheduler.get_progress()
                 metric_record = {
-                    "schema_version": "rl_training_metrics.v1",
                     "recorded_at_utc": datetime.now(timezone.utc).isoformat(),
                     "step": int(step),
                     "max_steps": int(max_steps),
@@ -2386,7 +2351,7 @@ class GRPOTrainer:
         improved policy back to the original SFT reference.
 
         Uses torch.distributed directly (not accelerator.gather_object /
-        broadcast_object) so it works on older accelerate versions in the sif.
+        broadcast_object) so it works on older accelerate versions.
         """
         import torch.distributed as dist
 
@@ -2404,7 +2369,7 @@ class GRPOTrainer:
         if self.accelerator.is_main_process:
             for item in [entry for rank_items in gathered for entry in rank_items]:
                 # Four fields are the redesigned contract.  Accept historical
-                # three-field pending entries for legacy checkpoints/tests.
+                # older three-field pending entries
                 if len(item) == 4:
                     g_bid, avg_q, baseline, family = item
                     families = [family]

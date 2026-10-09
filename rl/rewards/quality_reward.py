@@ -12,21 +12,12 @@ to the curriculum scheduler's competence estimate.
 
 import re
 import math
-import json
 import os
 from typing import List, Optional
 from collections import Counter
 
 
-# Allow direct execution
-if __name__ == "__main__":
-    sys.path.insert(0, __file__.rsplit("/", 2)[0])
-
-# Handle both direct execution and module import
-try:
-    from .base import BaseReward, extract_answer_from_response
-except ImportError:
-    from base import BaseReward, extract_answer_from_response
+from .base import BaseReward, extract_answer_from_response
 
 
 # ============================================================================
@@ -43,9 +34,8 @@ def _tokenize(text: str) -> List[str]:
 
     Examples:
         "hello world"            → ["hello", "world"]
-        "中国abc def"            → ["中", "国", "abc", "def"]
-        "我们"                   → ["我", "们"]
-        "hello 世界 good"        → ["hello", "世", "界", "good"]
+        "hello world"            -> ["hello", "world"]
+        CJK text is split per character.
     """
     CJK_START_1 = 0x4E00   # CJK Unified Ideographs
     CJK_END_1   = 0x9FFF
@@ -396,91 +386,3 @@ class QualityRewardPipeline:
             ]
 
         return quality_scores
-
-
-# ============================================================================
-# Validation & testing
-# ============================================================================
-
-def _test_bleu():
-    """Test BLEU implementation."""
-    # Chinese S2TT
-    ref = "这些数据组件又充当数据交换的构建块"
-    cand1 = "这些数据组件又充当数据交换的构建块"
-    cand2 = "这些数据组件充当交换的构建"
-    cand3 = "completely different text"
-
-    print("=== BLEU Tests ===")
-    print(f"  Exact match:  {compute_bleu(cand1, ref):.4f} (expect ~1.0)")
-    print(f"  Partial:      {compute_bleu(cand2, ref):.4f} (expect ~0.5-0.7)")
-    print(f"  No match:     {compute_bleu(cand3, ref):.4f} (expect ~0.0)")
-
-    # English
-    en_ref = "the cat sat on the mat"
-    en_cand = "the cat sat on a mat"
-    print(f"  English BLEU: {compute_bleu(en_cand, en_ref):.4f}")
-
-
-def _test_classification():
-    """Test question type classification."""
-    s2tt_gt = "<THINK>...</THINK>\n<RESPONSE>这些数��组件又充��数据交换的构建块</RESPONSE>"
-    choice_gt = "<THINK>...</THINK>\n<RESPONSE>The answer is B.</RESPONSE>"
-    open_gt = "<THINK><PLANNING>...open analysis...</PLANNING><RESPONSE>The audio features a complex interplay of sounds.</RESPONSE>"
-
-    print("\n=== Classification Tests ===")
-    print(f"  S2TT:   {_is_s2tt_question(s2tt_gt)} (expect True)")
-    print(f"  Choice: {_is_choice_question(choice_gt)} (expect True)")
-    print(f"  S2TT misclassified as choice: {_is_choice_question(s2tt_gt)} (expect False)")
-    print(f"  Open misclassified as S2TT:   {_is_s2tt_question(open_gt)} (expect False)")
-    print(f"  Open misclassified as choice: {_is_choice_question(open_gt)} (expect False)")
-
-
-def _test_choice_reward():
-    """Test choice reward extraction."""
-    print("\n=== Choice Reward Tests ===")
-    test_cases = [
-        # (response, ground_truth, expected)
-        (r"The answer is \boxed{B}", "<RESPONSE>THE ANSWER IS B</RESPONSE>", 1.0),
-        (r"I think it's C", "<RESPONSE>The answer is C</RESPONSE>", 0.0),  # no explicit answer
-        (r"<RESPONSE>THE ANSWER IS A</RESPONSE>", "<RESPONSE>The answer is A</RESPONSE>", 1.0),
-        ("", "<RESPONSE>B</RESPONSE>", 0.0),  # empty
-    ]
-    for resp, gt, expected in test_cases:
-        result = compute_choice_reward(resp, gt)
-        status = "✓" if abs(result - expected) < 0.01 else "✗"
-        print(f"  {status} Got {result}, expected {expected}")
-
-
-def _test_metadata_routing():
-    """Test the quality reward routing with metadata."""
-    print("\n=== Routing Tests ===")
-    reward = QualityReward(default_open_score=0.5)
-
-    # S2TT with metadata
-    resp = "<RESPONSE>这些数��组件又充��数据交换��构建块</RESPONSE>"
-    gt = "<RESPONSE>这些数据组件又充���数据交换的构建块</RESPONSE>"
-    meta = [{"subset": "S2TT", "type": "s2tt", "question": "Transform speech to Chinese"}]
-    scores = reward([resp], [gt], meta)
-    print(f"  S2TT (exact match): {scores[0]:.4f} (expect ~1.0)")
-
-    # Choice with metadata
-    resp2 = r"<RESPONSE>\boxed{B}</RESPONSE>"
-    gt2 = "<RESPONSE>THE ANSWER IS B</RESPONSE>"
-    meta2 = [{"subset": "clotho", "type": "choice", "question": "Which of the following..."}]
-    scores2 = reward([resp2], [gt2], meta2)
-    print(f"  Choice (correct B): {scores2[0]:.4f} (expect 1.0)")
-
-    # Open with metadata
-    resp3 = "<THINK><PLANNING>plan</PLANNING><CAPTION>caption</CAPTION><REASONING>reason</REASONING><SUMMARY>summary</SUMMARY></THINK><RESPONSE>analysis text</RESPONSE>"
-    gt3 = "<RESPONSE>some reference</RESPONSE>"
-    meta3 = [{"subset": "audiocap", "type": "open", "question": "Analyze the interplay..."}]
-    scores3 = reward([resp3], [gt3], meta3)
-    print(f"  Open (default): {scores3[0]:.4f} (expect 0.5)")
-
-
-if __name__ == "__main__":
-    _test_bleu()
-    _test_classification()
-    _test_choice_reward()
-    _test_metadata_routing()
-    print("\nAll tests complete.")

@@ -8,7 +8,6 @@ Usage:
 """
 import argparse
 import os
-import sys
 import json
 import soundfile as sf
 from datasets import load_dataset, load_from_disk, DatasetDict

@@ -44,7 +44,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = "audit_closed_difficulty.v1"
+SCHEMA_VERSION = "audit_closed_difficulty"
 DEFAULT_K = (1, 3, 4, 5, 8)
 SCHEMES = ("global", "task-stratified", "subset-task-stratified")
 METRICS = ("continuous_rms", "discrete_rms")

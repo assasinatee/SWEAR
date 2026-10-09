@@ -13,8 +13,6 @@ import re
 from typing import Sequence
 
 
-PARSER_VERSION = "baseline-choice-v4"
-
 _RESPONSE_TAG_RE = re.compile(r"<RESPONSE>(.*?)</RESPONSE>", re.IGNORECASE | re.DOTALL)
 _ANSWER_TAG_RE = re.compile(r"<answer>(.*?)</answer>", re.IGNORECASE | re.DOTALL)
 _CHOICE_PREFIX_RE = re.compile(r"^\s*\([A-H]\)\s*", re.IGNORECASE)

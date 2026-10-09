@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 
-SCHEMA_VERSION = "audio_reasoning.token_caps.v3"
+SCHEMA_VERSION = "token_caps"
 SECTIONS: Tuple[str, ...] = (
     "PLANNING",
     "CAPTION",

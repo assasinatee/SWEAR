@@ -16,7 +16,6 @@ import unicodedata
 from typing import Sequence
 
 
-SCORER_VERSION = "choice-equivalence-v1"
 _CHOICE_PREFIX_RE = re.compile(r"^\s*[\(（\[]\s*[A-H]\s*[\)）\]]\s*", re.IGNORECASE)
 
 

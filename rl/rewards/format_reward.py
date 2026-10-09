@@ -10,17 +10,13 @@ Expected format:
     </THINK>
     <RESPONSE>...</RESPONSE>
 
-Scoring:
-  - THINK 缺失或未闭合 → 整题 0 分（一票否决）
-  - PLANNING + <R> + 闭合 → +1
-  - CAPTION  + <R> + 闭合 → +1
-  - REASONING + <R> + 闭合 → +1
-  - SUMMARY 闭合          → +1
-  - RESPONSE 闭合/boxed   → +2
+Scoring: missing/unclosed THINK zeroes the item; each properly closed
+section with a rating token scores +1 (SUMMARY needs no rating), and a
+closed or boxed RESPONSE scores +2.
 """
 
 import re
-from typing import List, Tuple
+from typing import List
 from .base import BaseReward
 
 
@@ -80,35 +76,3 @@ class FormatReward(BaseReward):
 
         return scores
 
-
-class StrictFormatReward(BaseReward):
-    name = "format_strict"
-
-    def __call__(self, responses: List[str], ground_truths: List[str]) -> List[float]:
-        scores = []
-        for resp in responses:
-            if not _tag_is_properly_closed(resp, "<THINK>", "</THINK>"):
-                scores.append(0.0)
-                continue
-            if not _tag_is_properly_closed(resp, "<RESPONSE>", "</RESPONSE>"):
-                scores.append(0.0)
-                continue
-
-            all_ok = True
-            for tag in RATING_TAGS:
-                open_tag = f"<{tag}>"
-                close_tag = f"</{tag}>"
-                if open_tag in resp or close_tag in resp:
-                    if not _tag_is_properly_closed(resp, open_tag, close_tag) or \
-                       not _section_has_rating(resp, tag):
-                        all_ok = False
-                        break
-
-            # SUMMARY if present must close
-            if "<SUMMARY>" in resp or "</SUMMARY>" in resp:
-                if not _tag_is_properly_closed(resp, "<SUMMARY>", "</SUMMARY>"):
-                    all_ok = False
-
-            scores.append(1.0 if all_ok else 0.0)
-
-        return scores
