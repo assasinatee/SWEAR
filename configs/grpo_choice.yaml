@@ -1,0 +1,96 @@
+# Choice-only curriculum GRPO config.
+# ${VAR} placeholders are expanded from environment variables at load time.
+#
+# Required env vars:
+#   BASE_MODEL     - Qwen2.5-Omni-7B (local path or HF model id)
+#   SFT_CKPT       - SFT checkpoint to initialize RL from
+#   AUDIO_ROOT     - CoTA audio files directory
+#   CURRICULUM     - curriculum_data.jsonl path (built by data_prep/)
+
+model_name_or_path: ${BASE_MODEL}
+sft_checkpoint: ${SFT_CKPT}
+lora_rank: 64
+lora_alpha: 128
+output_dir: ./output/grpo_choice
+logging_steps: 10
+save_steps: 250
+per_device_train_batch_size: 4
+learning_rate: 1.0e-06
+lr_schedule: constant
+max_steps: 1750
+gradient_checkpointing: true
+seed: 42
+
+do_sample: true
+temperature: 1.0
+top_p: 1.0
+top_k: 0
+max_new_tokens: 1024
+max_new_tokens_by_type:
+  s2tt: 512
+  choice: 512
+  open: 1024
+
+rl:
+  curriculum:
+    K: 4
+    M: 512
+    progression_mode: bounded_mastery
+    min_frontier_prompts: 4096
+    consecutive_mastery_windows: 2
+    mastery_by_family:
+      choice: 0.5
+    revisit_decay: 0.5
+    min_weight: 0.1
+    baseline_by_type:
+      choice: 0.5
+
+  sampling:
+    mode: global_residual_quota
+    micro_slots_per_rank: 4
+
+  grpo:
+    G: 6
+    beta: 0.04
+    clip_eps: 0.2
+    T_f: 64
+
+  kl:
+    dynamic: true
+    reset_reference_on_merge: true
+
+  aux_loss:
+    coeff: 0.02
+    soft_variance: 0.5
+    num_ratings: 5
+
+  compression:
+    mode: sft_trace_interval
+    rating_levels: 5
+    coeff: 0.15
+    invalid_reward: -0.5
+
+  reward:
+    format_weight: 0.5
+
+  data_filter:
+    subsets:
+      - audiocap
+      - clotho
+      - complex_audio
+      - meld
+      - multispeaker
+      - musicbench
+    types:
+      - choice
+
+  data_augmentation:
+    option_permutation:
+      enabled: true
+      seed: 42017
+      drop_invalid: true
+
+  paths:
+    curriculum_data: ${CURRICULUM}
+    audio_root: ${AUDIO_ROOT}
+    audio_cache_cap: 512

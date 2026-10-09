@@ -1,0 +1,29 @@
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+
+# training artifacts
+output/
+runs/
+checkpoints/
+*.pt
+*.safetensors
+*.bin
+
+# data (never commit datasets / audio)
+data/
+*.jsonl
+*.parquet
+*.wav
+*.flac
+*.mp3
+converted_data/
+
+# eval outputs
+results/
+*.log
+
+# local configs with real paths
+configs/*.local.yaml
+.env
