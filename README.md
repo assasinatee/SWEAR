@@ -7,7 +7,7 @@ GRPO-based reinforcement learning for [Qwen2.5-Omni-7B](https://huggingface.co/Q
 ## Links
 
 - **Paper:** [arXiv:2610.13081](http://arxiv.org/abs/2610.13081)
-- **Model:** [assasinatee/DiCoTA-Qwen2.5-Omni-7B](https://huggingface.co/assasinatee/DiCoTA-Qwen2.5-Omni-7B)
+- **Model:** [assasinatee/SWEAR-Qwen2.5-Omni-7B](https://huggingface.co/assasinatee/SWEAR-Qwen2.5-Omni-7B)
 - **Dataset:** [assasinatee/DiCoTA](https://huggingface.co/datasets/assasinatee/DiCoTA)
 
 ## Install
@@ -52,7 +52,7 @@ bash scripts/train_grpo.sh          # torchrun, 8 GPUs
 torchrun --nproc_per_node=8 rl/train_grpo.py configs/grpo_choice.yaml
 ```
 
-## Evaluation (MMAU)
+## Evaluation (MMAU / MMAR)
 
 ```bash
 python eval/eval_mmau_unified.py \
@@ -62,6 +62,19 @@ python eval/eval_mmau_unified.py \
 ```
 
 Option accuracy with exact duplicate choices treated as equivalent.
+
+MMAR uses the same prompt and parsing; the headline metric is resolved-reference
+option accuracy, with the official string-match scores kept as diagnostics:
+
+```bash
+python eval/eval_mmar_unified.py \
+    --model $BASE_MODEL --ckpt $CKPT \
+    --meta /path/to/MMAR/MMAR-meta.json \
+    --audio-dir /path/to/MMAR/audio \
+    --out results/mmar.json
+```
+
+Download MMAR (metadata + audio) from the [official MMAR repository](https://github.com/ddlBo-/MMAR).
 
 ## License
 
