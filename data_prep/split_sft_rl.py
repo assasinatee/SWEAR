@@ -56,8 +56,8 @@ def collect_samples(compress_root: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--compress-root", type=str, default="/root/workspace/mount/share/liyixuan/audio_reasoning/compress/result")
-    ap.add_argument("--out", type=str, default="/root/workspace/mount/share/liyixuan/audio_reasoning/split_output")
+    ap.add_argument("--compress-root", type=str, default="./compress/result")
+    ap.add_argument("--out", type=str, default="./split_output")
     ap.add_argument("--ratio", type=float, default=0.7, help="SFT fraction (default 0.7)")
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--dry-run", action="store_true")

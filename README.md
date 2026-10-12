@@ -1,6 +1,14 @@
-# Curriculum GRPO Training for Audio LLMs
+# SWEAR: Section-Wise Efficient Audio Reasoning via Self-Rated Difficulty
+
+Official code for the paper [SWEAR: Section-Wise Efficient Audio Reasoning via Self-Rated Difficulty](http://arxiv.org/abs/2610.13081).
 
 GRPO-based reinforcement learning for [Qwen2.5-Omni-7B](https://huggingface.co/Qwen/Qwen2.5-Omni-7B) with a difficulty-bucketed curriculum and self-rated compression reward. Includes the SFT data preparation pipeline and the MMAU evaluation script used in the paper.
+
+## Links
+
+- **Paper:** [arXiv:2610.13081](http://arxiv.org/abs/2610.13081)
+- **Model:** [assasinatee/DiCoTA-Qwen2.5-Omni-7B](https://huggingface.co/assasinatee/DiCoTA-Qwen2.5-Omni-7B)
+- **Dataset:** [assasinatee/DiCoTA](https://huggingface.co/datasets/assasinatee/DiCoTA)
 
 ## Install
 
@@ -58,3 +66,14 @@ Option accuracy with exact duplicate choices treated as equivalent.
 ## License
 
 Apache License 2.0.
+
+## Citation
+
+```bibtex
+@article{li2026swear,
+  title   = {SWEAR: Section-Wise Efficient Audio Reasoning via Self-Rated Difficulty},
+  author  = {Li, Yixuan and Lv, Minghao and Xu, Xuenan and Zheng, Zihao and Wu, Mengyue},
+  journal = {arXiv preprint arXiv:2610.13081},
+  year    = {2026}
+}
+```
