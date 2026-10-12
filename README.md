@@ -2,7 +2,10 @@
 
 Official code for the paper [SWEAR: Section-Wise Efficient Audio Reasoning via Self-Rated Difficulty](http://arxiv.org/abs/2610.13081).
 
-GRPO-based reinforcement learning for [Qwen2.5-Omni-7B](https://huggingface.co/Qwen/Qwen2.5-Omni-7B) with a difficulty-bucketed curriculum and self-rated compression reward. Includes the SFT data preparation pipeline and the MMAU evaluation script used in the paper.
+The repository covers the full SWEAR pipeline on [Qwen2.5-Omni-7B](https://huggingface.co/Qwen/Qwen2.5-Omni-7B):
+preparing training data from compressed chain-of-thought traces, SFT via LLaMA-Factory,
+difficulty-bucketed curriculum GRPO with self-rated compression rewards,
+and unified MMAU / MMAR evaluation.
 
 ## Links
 
@@ -73,8 +76,6 @@ python eval/eval_mmar_unified.py \
     --audio-dir /path/to/MMAR/audio \
     --out results/mmar.json
 ```
-
-Download MMAR (metadata + audio) from the [official MMAR repository](https://github.com/ddlBo-/MMAR).
 
 ## License
 
