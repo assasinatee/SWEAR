@@ -7,7 +7,7 @@ GRPO-based reinforcement learning for [Qwen2.5-Omni-7B](https://huggingface.co/Q
 ## Links
 
 - **Paper:** [arXiv:2610.13081](http://arxiv.org/abs/2610.13081)
-- **Model:** [assasinatee/SWEAR-Qwen2.5-Omni-7B](https://huggingface.co/assasinatee/SWEAR-Qwen2.5-Omni-7B)
+- **Model:** [assasinatee/SWEAR](https://huggingface.co/assasinatee/SWEAR)
 - **Dataset:** [assasinatee/DiCoTA](https://huggingface.co/datasets/assasinatee/DiCoTA)
 
 ## Install
